@@ -119,19 +119,21 @@ class Camera:
         cam = Camera(index=1)  # second camera
     """
 
-    def __init__(self, serial=None, index=0):
+    def __init__(self, serial=None, index=0, timeout=5.0):
         """Open a supercamera device.
 
         Args:
             serial: Serial number string to match a specific camera.
             index: Which camera to open if multiple are found (0-based).
                    Ignored if serial is provided.
+            timeout: Seconds to wait for a frame before giving up.
         """
         self._dev = None
         self._streaming = False
         self._frames_read = 0
         self._serial = serial
         self._index = index
+        self._timeout = timeout
         self._open()
 
     def _find_device(self):
@@ -214,14 +216,12 @@ class Camera:
         """Read one complete JPEG frame from USB. Returns bytes or None."""
         buf = bytearray()
         in_frame = False
-        errors = 0
+        deadline = time.monotonic() + self._timeout
 
-        while errors < 30:
+        while time.monotonic() < deadline:
             try:
-                data = bytes(self._dev.read(EP_IN, 65536, timeout=3000))
-                errors = 0
+                data = bytes(self._dev.read(EP_IN, 65536, timeout=1000))
             except usb.core.USBError:
-                errors += 1
                 continue
 
             # Strip 12-byte protocol header
@@ -313,6 +313,14 @@ class Camera:
             return self._dev.serial_number
         except Exception:
             return None
+
+    @property
+    def bus(self):
+        return self._dev.bus if self._dev else None
+
+    @property
+    def address(self):
+        return self._dev.address if self._dev else None
 
     @property
     def is_opened(self):
