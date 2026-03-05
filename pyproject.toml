@@ -1,0 +1,41 @@
+[project]
+name = "supercamera"
+version = "0.1.0"
+description = "Python driver for USB endoscopes using the supercamera/useeplus protocol (Oasis, Depstech, etc.)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "g" },
+]
+keywords = ["usb", "endoscope", "camera", "supercamera", "useeplus", "oasis", "borescope", "opencv"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pyusb>=1.2.0",
+]
+
+[project.optional-dependencies]
+opencv = ["opencv-python", "numpy"]
+validate = ["pillow"]
+all = ["opencv-python", "numpy", "pillow"]
+
+[project.scripts]
+supercamera = "supercamera.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/g/supercamera"
+Issues = "https://github.com/g/supercamera/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
