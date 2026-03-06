@@ -8,7 +8,7 @@ These devices don't implement standard UVC, so they won't show up as webcams. Th
 
 | USB ID | Device name | Status |
 |--------|-------------|--------|
-| `2ce3:3828` | supercamera (Geek szitman) | Tested |
+| `2ce3:3828` | supercamera (Geek szitman) | Tested with [Vividia FC-5550i](https://www.oasisscientific.com/collections/borescopes/products/vividia-fc-5550i-semi-rigid-borescope-for-iphone-ipad-android-windows-pc) |
 | `0329:2022` | supercamera (variant) | Untested — [reported compatible](https://github.com/hbens/geek-szitman-supercamera) |
 
 Check yours with `lsusb` (Linux) or `system_profiler SPUSBDataType` (macOS).
