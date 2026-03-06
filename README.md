@@ -108,14 +108,14 @@ Runs: device listing, single capture, 3x reconnect (no replug), OpenCV read, and
 
 ## Platform notes
 
-- **macOS**: Works out of the box. No kernel extensions needed.
-- **Linux**: Works. You may need a udev rule for non-root access:
+- **macOS**: Tested. Works out of the box. No kernel extensions needed.
+- **Linux**: Untested. Should work (pyusb/libusb). You may need a udev rule for non-root access:
   ```bash
   echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2ce3", ATTR{idProduct}=="3828", MODE="0666"' | \
     sudo tee /etc/udev/rules.d/99-supercamera.rules
   sudo udevadm control --reload-rules
   ```
-- **Windows**: Should work with [libusb](https://libusb.info/) + [Zadig](https://zadig.akeo.ie/) driver. Untested.
+- **Windows**: Untested. Should work with [libusb](https://libusb.info/) + [Zadig](https://zadig.akeo.ie/) driver.
 
 ## Credits
 
