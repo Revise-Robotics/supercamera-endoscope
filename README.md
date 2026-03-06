@@ -6,10 +6,10 @@ These devices don't implement standard UVC, so they won't show up as webcams. Th
 
 ## Supported devices
 
-| USB ID | Device name | Chip |
-|--------|-------------|------|
-| `2ce3:3828` | supercamera (Geek szitman) | Common |
-| `0329:2022` | supercamera (variant) | Common |
+| USB ID | Device name | Status |
+|--------|-------------|--------|
+| `2ce3:3828` | supercamera (Geek szitman) | Tested |
+| `0329:2022` | supercamera (variant) | Untested — [reported compatible](https://github.com/hbens/geek-szitman-supercamera) |
 
 Check yours with `lsusb` (Linux) or `system_profiler SPUSBDataType` (macOS).
 
