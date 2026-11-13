@@ -32,11 +32,20 @@ def main():
         "--show", action="store_true",
         help="Display frames using OpenCV (requires opencv-python)"
     )
+    parser.add_argument(
+        "--dump", metavar="FILE.zip", default=None,
+        help="Save raw USB data to a zip for bug reports and exit"
+    )
     args = parser.parse_args()
 
     if args.list:
         _list_cameras()
         return
+
+    if args.dump:
+        from supercamera.debug import dump
+
+        sys.exit(dump(args.dump, serial=args.serial, index=args.index))
 
     from supercamera import Camera
 
@@ -46,7 +55,10 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Connected: {cam.resolution[0]}x{cam.resolution[1]} (serial: {cam.serial_number})")
+    print(
+        f"Connected: {cam.resolution[0]}x{cam.resolution[1]} {cam.variant} "
+        f"(serial: {cam.serial_number})"
+    )
 
     if args.show:
         _live_view(cam)
@@ -67,7 +79,8 @@ def _list_cameras():
         print(f"  [{i}] {cam.vendor_id:04x}:{cam.product_id:04x}"
               f"  serial={cam.serial_number}"
               f"  ({cam.manufacturer} {cam.product})"
-              f"  bus={cam.bus} addr={cam.address}")
+              f"  bus={cam.bus} addr={cam.address}"
+              f"  variant={cam.variant or 'unknown'}")
 
 
 def _capture(cam, num_frames, prefix):

@@ -13,6 +13,17 @@ These devices don't implement standard UVC, so they won't show up as webcams. Th
 
 Check yours with `lsusb` (Linux) or `system_profiler SPUSBDataType` (macOS).
 
+### Two variants, same USB ID
+
+Cameras sold with the same `2ce3:3828` ID come in two flavours. The driver picks the right one from the USB descriptors.
+
+| Variant | USB layout | Frames | Status |
+|---------|-----------|--------|--------|
+| `mjpeg` | two interfaces | 640x480 JPEG | Tested |
+| `yuyv` | one interface | raw YUYV, usually 320x240 | Untested by us, added in 0.2.0. Please [report](https://github.com/Revise-Robotics/supercamera-endoscope/issues) how it goes |
+
+`supercamera --list` shows which one you have.
+
 ## Install
 
 ```bash
@@ -59,6 +70,7 @@ supercamera              # capture one frame
 supercamera -n 10        # capture 10 frames
 supercamera -i 1         # use second camera
 supercamera --show       # live view (requires opencv-python)
+supercamera --dump out.zip   # save raw USB data for a bug report
 ```
 
 ### Frame validation
@@ -88,7 +100,9 @@ cam.release()
 
 ## How it works
 
-These endoscopes use a proprietary USB protocol (`com.useeplus.protocol`) instead of UVC. The driver:
+These endoscopes use a proprietary USB protocol (`com.useeplus.protocol`) instead of UVC.
+
+For the `mjpeg` variant the driver:
 
 1. Claims USB interfaces, sends magic init (`ff 55 ff 55 ee 10`) and connect command (`bb aa 05 00 00`)
 2. Reads bulk USB packets containing JPEG-encoded 640x480 frames
@@ -96,12 +110,27 @@ These endoscopes use a proprietary USB protocol (`com.useeplus.protocol`) instea
 
 Resolution is **640x480** regardless of what the product listing claims.
 
+For the `yuyv` variant the driver:
+
+1. Claims interface 0 and asks the camera for its frame size (control request `0xa0`, request 0, value 5)
+2. Starts the stream (control request `0x20`, request 1, value 5)
+3. Reads raw YUYV frames, each preceded by a 511 byte header
+4. Stops the stream on release (control request `0x20`, request 2, value 5)
+
+`read()` works the same for both. On the `yuyv` variant `read_jpeg()` encodes the frame, so it needs `opencv-python` or `pillow`, and `read_raw()` gives the untouched YUYV bytes.
+
 ## Testing
 
-Plug in one or both cameras, then:
+Without a camera (fake USB device):
 
 ```bash
-python test_camera.py
+uv run --all-extras pytest
+```
+
+With one or both cameras plugged in:
+
+```bash
+python hardware_test.py
 ```
 
 Runs: device listing, single capture, 3x reconnect (no replug), OpenCV read, and two-camera simultaneous capture (if two connected).
@@ -117,6 +146,12 @@ Runs: device listing, single capture, 3x reconnect (no replug), OpenCV read, and
 Protocol reverse-engineered by:
 - [hbens/geek-szitman-supercamera](https://github.com/hbens/geek-szitman-supercamera) (C++ PoC, CC0)
 - [MAkcanca/useeplus-linux-driver](https://github.com/MAkcanca/useeplus-linux-driver) (Linux kernel driver)
+
+The `yuyv` variant follows:
+- [Bognabon/Endoscope_Viewer](https://github.com/Bognabon/Endoscope_Viewer) (Python viewer)
+- [KlumpRasmus/supercamera-yuyv-linux](https://github.com/KlumpRasmus/supercamera-yuyv-linux) (Linux kernel driver)
+- [JimKnopfIoT/harbour-pipecam](https://github.com/JimKnopfIoT/harbour-pipecam) (Sailfish app)
+- the Usee Plus Android app
 
 ## License
 

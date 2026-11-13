@@ -1,8 +1,12 @@
 """USB communication with supercamera devices (Oasis, Depstech, etc.)."""
 
+import time
+import warnings
+
 import usb.core
 import usb.util
-import time
+
+from supercamera import yuyv
 
 # Known vendor/product ID pairs for supercamera devices
 KNOWN_DEVICES = [
@@ -25,6 +29,84 @@ CONNECT_CMD = bytes([0xBB, 0xAA, 0x05, 0x00, 0x00])
 HEADER_SIZE = 12
 JPEG_SOI = bytes([0xFF, 0xD8])
 JPEG_EOI = bytes([0xFF, 0xD9])
+
+# Two interfaces, JPEG frames on interface 1. Tested on real hardware.
+VARIANT_MJPEG = "mjpeg"
+# One interface, raw YUYV frames. Not tested on real hardware, see yuyv.py.
+VARIANT_YUYV = "yuyv"
+
+JPEG_QUALITY = 90
+
+
+class Layout:
+    """Which protocol variant a device speaks, and where its endpoints are."""
+
+    def __init__(self, variant, interface=None, ep_in=None, ep_out=None):
+        self.variant = variant
+        self.interface = interface
+        self.ep_in = ep_in
+        self.ep_out = ep_out
+
+    def __repr__(self):
+        if self.variant == VARIANT_MJPEG:
+            return "Layout(mjpeg)"
+        ep_out = "none" if self.ep_out is None else f"{self.ep_out:#04x}"
+        return (
+            f"Layout(yuyv interface={self.interface} "
+            f"ep_in={self.ep_in:#04x} ep_out={ep_out})"
+        )
+
+
+def _describe_interfaces(usb_dev):
+    parts = []
+    for cfg in usb_dev:
+        for intf in cfg:
+            eps = ",".join(f"{ep.bEndpointAddress:#04x}" for ep in intf)
+            parts.append(
+                f"interface {intf.bInterfaceNumber} alt {intf.bAlternateSetting} "
+                f"class {intf.bInterfaceClass:#04x}/{intf.bInterfaceSubClass:#04x}/"
+                f"{intf.bInterfaceProtocol:#04x} endpoints [{eps}]"
+            )
+    return "; ".join(parts)
+
+
+def detect_layout(usb_dev):
+    """Work out which protocol variant a device speaks from its descriptors.
+
+    - any interface numbered 1 -> the two interface JPEG variant
+    - only interface 0, with a bulk IN endpoint -> the one interface YUYV variant
+    - anything else is refused
+
+    Raises:
+        RuntimeError: if the layout matches neither variant.
+    """
+    interfaces = [intf for cfg in usb_dev for intf in cfg]
+    numbers = set(intf.bInterfaceNumber for intf in interfaces)
+
+    if 1 in numbers:
+        return Layout(VARIANT_MJPEG)
+
+    if numbers == {0}:
+        for intf in sorted(interfaces, key=lambda i: i.bAlternateSetting):
+            ep_in = None
+            ep_out = None
+            for ep in intf:
+                if usb.util.endpoint_type(ep.bmAttributes) != usb.util.ENDPOINT_TYPE_BULK:
+                    continue
+                if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN:
+                    if ep_in is None:
+                        ep_in = ep.bEndpointAddress
+                elif ep_out is None:
+                    ep_out = ep.bEndpointAddress
+            if ep_in is not None:
+                return Layout(VARIANT_YUYV, interface=0, ep_in=ep_in, ep_out=ep_out)
+
+    raise RuntimeError(
+        "This camera has a USB layout this driver does not know: "
+        + (_describe_interfaces(usb_dev) or "no interfaces")
+        + "\nPlease report it at "
+        "https://github.com/Revise-Robotics/supercamera-endoscope/issues"
+    )
 
 
 class CameraInfo:
@@ -69,6 +151,14 @@ class CameraInfo:
     @property
     def address(self):
         return self._dev.address
+
+    @property
+    def variant(self):
+        """"mjpeg", "yuyv", or None if the layout is not recognised."""
+        try:
+            return detect_layout(self._dev).variant
+        except Exception:
+            return None
 
     def __repr__(self):
         return (
@@ -131,6 +221,12 @@ class Camera:
         self._dev = None
         self._streaming = False
         self._frames_read = 0
+        self._layout = None
+        self._info = None
+        self._info_raw = None
+        self._assembler = None
+        self._width = 640
+        self._height = 480
         self._serial = serial
         self._index = index
         self._timeout = timeout
@@ -176,7 +272,85 @@ class Camera:
 
     def _open(self):
         dev = self._find_device()
+        layout = detect_layout(dev)
         self._dev = dev
+        self._layout = layout
+        if layout.variant == VARIANT_YUYV:
+            self._open_yuyv()
+        else:
+            self._open_mjpeg()
+
+    def _open_yuyv(self):
+        dev = self._dev
+        layout = self._layout
+
+        try:
+            if dev.is_kernel_driver_active(layout.interface):
+                dev.detach_kernel_driver(layout.interface)
+        except Exception:
+            pass
+
+        try:
+            dev.set_configuration()
+        except usb.core.USBError:
+            pass
+
+        usb.util.claim_interface(dev, layout.interface)
+
+        for ep in (layout.ep_in, layout.ep_out):
+            if ep is None:
+                continue
+            try:
+                dev.clear_halt(ep)
+            except usb.core.USBError:
+                pass
+
+        width, height = yuyv.FALLBACK_WIDTH, yuyv.FALLBACK_HEIGHT
+        try:
+            self._info_raw = bytes(dev.ctrl_transfer(
+                yuyv.REQ_TYPE_IN, yuyv.REQ_GETINFO, yuyv.REQ_VALUE, 0,
+                yuyv.GETINFO_SIZE, timeout=1000,
+            ))
+            self._info = yuyv.parse_info(self._info_raw)
+            width, height = self._info.width, self._info.height
+        except (usb.core.USBError, ValueError) as e:
+            raw = self._info_raw[:64].hex(" ") if self._info_raw else "nothing"
+            warnings.warn(
+                f"could not read the frame size from the camera ({e}), "
+                f"assuming {width}x{height}. camera replied: {raw}"
+            )
+
+        self._width = width
+        self._height = height
+        self._assembler = yuyv.FrameAssembler(width * height * yuyv.BYTES_PER_PIXEL)
+
+        dev.ctrl_transfer(
+            yuyv.REQ_TYPE_OUT, yuyv.REQ_CAMERA_UP, yuyv.REQ_VALUE, 0,
+            bytes(yuyv.CAMERA_UP_SIZE), timeout=1000,
+        )
+        time.sleep(0.2)
+
+        self._streaming = True
+        self._frames_read = 0
+
+    def _read_raw_internal(self):
+        """Read one complete raw YUYV frame from USB. Returns bytes or None."""
+        deadline = time.monotonic() + self._timeout
+        while time.monotonic() < deadline:
+            try:
+                data = self._dev.read(
+                    self._layout.ep_in, self._assembler.read_size, timeout=1000
+                )
+            except usb.core.USBError:
+                continue
+            frame = self._assembler.feed(data)
+            if frame is not None:
+                self._frames_read += 1
+                return frame
+        return None
+
+    def _open_mjpeg(self):
+        dev = self._dev
 
         # Detach kernel drivers
         for intf in [0, 1]:
@@ -252,6 +426,25 @@ class Camera:
         """
         if not self._streaming:
             raise RuntimeError("Camera is not streaming. Call open() or use Camera().")
+        if self._layout.variant == VARIANT_YUYV:
+            raw = self._read_raw_internal()
+            if raw is None:
+                return None
+            return _yuyv_to_jpeg(raw, self._width, self._height)
+        return self._read_jpeg_internal()
+
+    def read_raw(self):
+        """Read one frame exactly as the camera sent it.
+
+        Returns:
+            bytes or None: JPEG data on the JPEG variant, packed YUYV
+            (width * height * 2 bytes) on the YUYV variant, or None if the
+            read failed.
+        """
+        if not self._streaming:
+            raise RuntimeError("Camera is not streaming. Call open() or use Camera().")
+        if self._layout.variant == VARIANT_YUYV:
+            return self._read_raw_internal()
         return self._read_jpeg_internal()
 
     def read(self):
@@ -270,6 +463,17 @@ class Camera:
                 "Or use read_jpeg() for raw JPEG bytes without extra dependencies."
             )
 
+        if self._layout is not None and self._layout.variant == VARIANT_YUYV:
+            if not self._streaming:
+                raise RuntimeError("Camera is not streaming. Call open() or use Camera().")
+            raw = self._read_raw_internal()
+            if raw is None:
+                return False, None
+            packed = np.frombuffer(raw, dtype=np.uint8).reshape(
+                (self._height, self._width, 2)
+            )
+            return True, cv2.cvtColor(packed, cv2.COLOR_YUV2BGR_YUY2)
+
         jpeg = self.read_jpeg()
         if jpeg is None:
             return False, None
@@ -283,6 +487,10 @@ class Camera:
     def release(self):
         """Stop streaming and release the USB device."""
         if self._dev is None:
+            return
+
+        if self._layout is not None and self._layout.variant == VARIANT_YUYV:
+            self._release_yuyv()
             return
 
         if self._streaming:
@@ -305,6 +513,29 @@ class Camera:
 
         self._dev = None
 
+    def _release_yuyv(self):
+        if self._streaming:
+            try:
+                self._dev.ctrl_transfer(
+                    yuyv.REQ_TYPE_OUT, yuyv.REQ_CAMERA_DOWN, yuyv.REQ_VALUE, 0,
+                    None, timeout=1000,
+                )
+            except Exception:
+                pass
+            self._streaming = False
+
+        try:
+            usb.util.release_interface(self._dev, self._layout.interface)
+        except Exception:
+            pass
+
+        try:
+            usb.util.dispose_resources(self._dev)
+        except Exception:
+            pass
+
+        self._dev = None
+
     @property
     def serial_number(self):
         if self._dev is None:
@@ -313,6 +544,16 @@ class Camera:
             return self._dev.serial_number
         except Exception:
             return None
+
+    @property
+    def variant(self):
+        """"mjpeg" (two interfaces, JPEG) or "yuyv" (one interface, raw)."""
+        return self._layout.variant if self._layout else None
+
+    @property
+    def device_info(self):
+        """What the camera reported about itself (YUYV variant only)."""
+        return self._info
 
     @property
     def bus(self):
@@ -328,7 +569,7 @@ class Camera:
 
     @property
     def resolution(self):
-        return (640, 480)
+        return (self._width, self._height)
 
     @property
     def frames_read(self):
@@ -342,3 +583,38 @@ class Camera:
 
     def __del__(self):
         self.release()
+
+
+def _yuyv_to_jpeg(raw, width, height):
+    """Encode one packed YUYV frame as JPEG, with OpenCV or else Pillow."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        cv2 = None
+
+    if cv2 is not None:
+        packed = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 2))
+        bgr = cv2.cvtColor(packed, cv2.COLOR_YUV2BGR_YUY2)
+        ok, encoded = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+        if not ok:
+            return None
+        return encoded.tobytes()
+
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        raise ImportError(
+            "This camera sends raw frames, so read_jpeg() needs opencv-python "
+            "or pillow to encode them. Install one with: pip install pillow\n"
+            "Or use read_raw() for the raw YUYV bytes without extra dependencies."
+        )
+
+    y, u, v = yuyv.yuyv_to_planes(raw, width, height)
+    y_img = Image.frombytes("L", (width, height), y)
+    u_img = Image.frombytes("L", (width // 2, height), u).resize((width, height))
+    v_img = Image.frombytes("L", (width // 2, height), v).resize((width, height))
+    out = io.BytesIO()
+    Image.merge("YCbCr", (y_img, u_img, v_img)).save(out, format="JPEG", quality=JPEG_QUALITY)
+    return out.getvalue()

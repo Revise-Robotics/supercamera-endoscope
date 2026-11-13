@@ -1,6 +1,6 @@
 [project]
 name = "supercamera"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python driver for USB endoscopes using the supercamera/useeplus protocol (Oasis, Depstech, etc.)"
 readme = "README.md"
 license = "MIT"
@@ -39,3 +39,11 @@ Issues = "https://github.com/Revise-Robotics/supercamera-endoscope/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
