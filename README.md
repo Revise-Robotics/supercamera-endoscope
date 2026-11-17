@@ -19,7 +19,8 @@ Cameras sold with the same `2ce3:3828` ID come in two flavours. The driver picks
 
 | Variant | USB layout | Frames | Status |
 |---------|-----------|--------|--------|
-| `mjpeg` | two interfaces | 640x480 JPEG | Tested |
+| `mjpeg` | two interfaces, firmware 1.00 | 640x480 JPEG | Tested |
+| `yuyv` | two interfaces, firmware 1.11 | raw YUYV 320x240 | Tested (added in 0.2.0) |
 | `yuyv` | one interface | raw YUYV, usually 320x240 | Untested by us, added in 0.2.0. Please [report](https://github.com/Revise-Robotics/supercamera-endoscope/issues) how it goes |
 
 `supercamera --list` shows which one you have.
@@ -112,7 +113,7 @@ Resolution is **640x480** regardless of what the product listing claims.
 
 For the `yuyv` variant the driver:
 
-1. Claims interface 0 and asks the camera for its frame size (control request `0xa0`, request 0, value 5)
+1. Claims the data interface and asks the camera for its frame size (control request `0xa0`, request 0, value 5)
 2. Starts the stream (control request `0x20`, request 1, value 5)
 3. Reads raw YUYV frames, each preceded by a 511 byte header
 4. Stops the stream on release (control request `0x20`, request 2, value 5)

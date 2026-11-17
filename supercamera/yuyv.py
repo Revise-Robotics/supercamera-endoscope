@@ -36,7 +36,7 @@ MAX_DIMENSION = 4096
 INFO_MAGIC = b"\xcc\xbb"
 INFO_TYPE_PRODUCT = 1
 INFO_PAYLOAD_OFFSET = 6
-INFO_MIN_PAYLOAD = 0x43
+INFO_MIN_PAYLOAD = 0x32
 
 
 class DeviceInfo:
@@ -70,9 +70,13 @@ def _text(raw):
 
 
 def parse_info(data):
-    """Parse the 512 byte getinfo reply.
+    """Parse the getinfo reply.
 
-    Layout (from the app's setproductinfo2), payload starts at byte 6:
+    The reply to the control request is the bare payload (seen on a real
+    camera: 480 bytes, no prefix). The app also handles the same payload
+    wrapped in a "cc bb" + type + 3 byte prefix, so both are accepted.
+
+    Payload layout (from the app's setproductinfo2):
         0x00 u8   config version
         0x01 16s  vendor
         0x11 16s  product
@@ -87,14 +91,15 @@ def parse_info(data):
             dimensions are not usable.
     """
     data = bytes(data)
-    if len(data) < INFO_PAYLOAD_OFFSET + INFO_MIN_PAYLOAD:
+    if data[0:2] == INFO_MAGIC:
+        if len(data) < 3 or data[2] != INFO_TYPE_PRODUCT:
+            raise ValueError(f"info reply has unexpected type: {data[2:3].hex()}")
+        p = data[INFO_PAYLOAD_OFFSET:]
+    else:
+        p = data
+    if len(p) < INFO_MIN_PAYLOAD:
         raise ValueError(f"info reply too short: {len(data)} bytes")
-    if data[0:2] != INFO_MAGIC:
-        raise ValueError(f"info reply has wrong magic: {data[0:2].hex()}")
-    if data[2] != INFO_TYPE_PRODUCT:
-        raise ValueError(f"info reply has unexpected type: {data[2]}")
 
-    p = data[INFO_PAYLOAD_OFFSET:]
     width = int.from_bytes(p[0x2E:0x30], "little")
     height = int.from_bytes(p[0x30:0x32], "little")
     if not (0 < width <= MAX_DIMENSION and 0 < height <= MAX_DIMENSION):

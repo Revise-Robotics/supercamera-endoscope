@@ -32,8 +32,14 @@ JPEG_EOI = bytes([0xFF, 0xD9])
 
 # Two interfaces, JPEG frames on interface 1. Tested on real hardware.
 VARIANT_MJPEG = "mjpeg"
-# One interface, raw YUYV frames. Not tested on real hardware, see yuyv.py.
+# Raw YUYV frames started with control requests, see yuyv.py. Seen in two
+# layouts: one interface (not tested on real hardware), and two interfaces
+# with firmware 1.11 (tested on real hardware).
 VARIANT_YUYV = "yuyv"
+
+# Two interface cameras with this bcdDevice speak the raw protocol on
+# interface 1 instead of JPEG. The Usee Plus app checks for the same value.
+BCD_DEVICE_RAW = 0x0111
 
 JPEG_QUALITY = 90
 
@@ -41,9 +47,10 @@ JPEG_QUALITY = 90
 class Layout:
     """Which protocol variant a device speaks, and where its endpoints are."""
 
-    def __init__(self, variant, interface=None, ep_in=None, ep_out=None):
+    def __init__(self, variant, interface=None, alt=0, ep_in=None, ep_out=None):
         self.variant = variant
         self.interface = interface
+        self.alt = alt
         self.ep_in = ep_in
         self.ep_out = ep_out
 
@@ -52,7 +59,7 @@ class Layout:
             return "Layout(mjpeg)"
         ep_out = "none" if self.ep_out is None else f"{self.ep_out:#04x}"
         return (
-            f"Layout(yuyv interface={self.interface} "
+            f"Layout(yuyv interface={self.interface} alt={self.alt} "
             f"ep_in={self.ep_in:#04x} ep_out={ep_out})"
         )
 
@@ -73,8 +80,9 @@ def _describe_interfaces(usb_dev):
 def detect_layout(usb_dev):
     """Work out which protocol variant a device speaks from its descriptors.
 
-    - any interface numbered 1 -> the two interface JPEG variant
-    - only interface 0, with a bulk IN endpoint -> the one interface YUYV variant
+    - two interfaces, firmware 1.11 -> YUYV on interface 1
+    - two interfaces, any other firmware -> the JPEG variant
+    - only interface 0, with a bulk IN endpoint -> YUYV on interface 0
     - anything else is refused
 
     Raises:
@@ -84,10 +92,17 @@ def detect_layout(usb_dev):
     numbers = set(intf.bInterfaceNumber for intf in interfaces)
 
     if 1 in numbers:
-        return Layout(VARIANT_MJPEG)
+        if usb_dev.bcdDevice != BCD_DEVICE_RAW:
+            return Layout(VARIANT_MJPEG)
+        number = 1
+    elif numbers == {0}:
+        number = 0
+    else:
+        number = None
 
-    if numbers == {0}:
-        for intf in sorted(interfaces, key=lambda i: i.bAlternateSetting):
+    if number is not None:
+        candidates = [i for i in interfaces if i.bInterfaceNumber == number]
+        for intf in sorted(candidates, key=lambda i: i.bAlternateSetting):
             ep_in = None
             ep_out = None
             for ep in intf:
@@ -99,7 +114,10 @@ def detect_layout(usb_dev):
                 elif ep_out is None:
                     ep_out = ep.bEndpointAddress
             if ep_in is not None:
-                return Layout(VARIANT_YUYV, interface=0, ep_in=ep_in, ep_out=ep_out)
+                return Layout(
+                    VARIANT_YUYV, interface=number, alt=intf.bAlternateSetting,
+                    ep_in=ep_in, ep_out=ep_out,
+                )
 
     raise RuntimeError(
         "This camera has a USB layout this driver does not know: "
@@ -296,6 +314,10 @@ class Camera:
             pass
 
         usb.util.claim_interface(dev, layout.interface)
+        if layout.alt:
+            dev.set_interface_altsetting(
+                interface=layout.interface, alternate_setting=layout.alt
+            )
 
         for ep in (layout.ep_in, layout.ep_out):
             if ep is None:
@@ -523,6 +545,14 @@ class Camera:
             except Exception:
                 pass
             self._streaming = False
+
+        if self._layout.alt:
+            try:
+                self._dev.set_interface_altsetting(
+                    interface=self._layout.interface, alternate_setting=0
+                )
+            except Exception:
+                pass
 
         try:
             usb.util.release_interface(self._dev, self._layout.interface)

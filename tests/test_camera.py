@@ -8,6 +8,7 @@ import supercamera
 from supercamera import camera as camera_module
 from tests.fakes import (
     INTERRUPT,
+    REAL_INFO_V111,
     FakeDevice,
     FakeEndpoint,
     FakeInterface,
@@ -15,6 +16,7 @@ from tests.fakes import (
     one_interface_device,
     solid_yuyv,
     two_interface_device,
+    v111_device,
 )
 
 W, H = 320, 240
@@ -49,6 +51,40 @@ def test_two_interfaces_is_mjpeg():
 def test_one_interface_is_yuyv_with_its_own_endpoints():
     layout = supercamera.detect_layout(one_interface_device())
     assert (layout.variant, layout.interface, layout.ep_in, layout.ep_out) == ("yuyv", 0, 0x82, 0x02)
+
+
+def test_two_interfaces_with_firmware_111_is_yuyv_on_interface_1():
+    layout = supercamera.detect_layout(v111_device())
+    assert (layout.variant, layout.interface, layout.alt, layout.ep_in) == ("yuyv", 1, 1, 0x82)
+
+
+def test_two_interfaces_with_other_firmware_stays_mjpeg():
+    for bcd in (0x0100, 0x0110, 0x0112, 0x0200):
+        dev = two_interface_device(bcd_device=bcd)
+        assert supercamera.detect_layout(dev).variant == "mjpeg"
+
+
+def test_firmware_111_camera_opens_on_interface_1_alt_1(plug):
+    f1 = solid_yuyv(W, H, **RED)
+    dev = plug(v111_device(info=REAL_INFO_V111, reads=stream(f1)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cam = supercamera.Camera(timeout=0.5)
+    assert dev.claimed == [1]
+    assert dev.altsettings == [(1, 1)]
+    assert cam.resolution == (320, 240)
+    assert cam.device_info.product == "su4p-002"
+    assert cam.read_raw() == f1
+    assert dev.read_calls[0][0] == 0x82
+    cam.release()
+    assert dev.altsettings == [(1, 1), (1, 0)]
+    assert dev.released == [1]
+
+
+def test_one_interface_camera_does_not_touch_altsettings(plug):
+    dev = plug(one_interface_device(info=make_info(W, H)))
+    supercamera.Camera().release()
+    assert dev.altsettings == []
 
 
 def test_endpoints_come_from_the_descriptor_not_constants():

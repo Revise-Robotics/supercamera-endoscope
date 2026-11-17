@@ -43,8 +43,10 @@ class FakeDevice:
     bus = 1
     address = 2
 
-    def __init__(self, interfaces, info=b"", reads=()):
+    def __init__(self, interfaces, info=b"", reads=(), bcd_device=0x0100):
         self._config = FakeConfig(interfaces)
+        self.bcdDevice = bcd_device
+        self.altsettings = []
         self.info = info
         self.reads = list(reads)
         self.control = []
@@ -63,6 +65,9 @@ class FakeDevice:
 
     def clear_halt(self, ep):
         pass
+
+    def set_interface_altsetting(self, interface=None, alternate_setting=None):
+        self.altsettings.append((interface, alternate_setting))
 
     def ctrl_transfer(self, request_type, request, value, index, data_or_length=None, timeout=None):
         self.control.append((request_type, request, value, index, data_or_length))
@@ -104,3 +109,21 @@ def make_info(width, height, magic=b"\xcc\xbb", kind=1, total=512):
 
 def solid_yuyv(width, height, y, u, v):
     return bytes([y, u, y, v]) * (width * height // 2)
+
+
+# info reply captured from a real camera on 2026-11-16: 2ce3:3828, bcdDevice 0x0111,
+# data interface string "com.ihighsky.dptl". 480 bytes, no cc bb prefix.
+REAL_INFO_V111 = bytes.fromhex(
+    "016934736561736f6e0000000000000000737534702d3030320000000000000000"
+    "352e302e3133000002005802004001f000"
+) + bytes(480 - 50)
+
+
+def v111_device(**kwargs):
+    """two interfaces like the jpeg cameras, but firmware 1.11 speaks the raw protocol
+    on interface 1 alt 1, with the endpoint numbers swapped."""
+    return FakeDevice([
+        FakeInterface(0, [FakeEndpoint(0x81), FakeEndpoint(0x01)]),
+        FakeInterface(1, [], alt=0, protocol=1),
+        FakeInterface(1, [FakeEndpoint(0x82), FakeEndpoint(0x02)], alt=1, protocol=1),
+    ], bcd_device=0x0111, **kwargs)
