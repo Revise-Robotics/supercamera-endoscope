@@ -118,6 +118,8 @@ For the `yuyv` variant the driver:
 3. Reads raw YUYV frames, each preceded by a 511 byte header
 4. Stops the stream on release (control request `0x20`, request 2, value 5)
 
+More detail, and what is still unknown, in [docs/protocol.md](docs/protocol.md).
+
 `read()` works the same for both. On the `yuyv` variant `read_jpeg()` encodes the frame, so it needs `opencv-python` or `pillow`, and `read_raw()` gives the untouched YUYV bytes.
 
 ## Testing
