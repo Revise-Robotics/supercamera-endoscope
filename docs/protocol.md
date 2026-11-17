@@ -78,7 +78,8 @@ max payload is width x height x 2 on camera B.
 ### stream
 
 a frame is a 511 byte header followed by width x height x 2 bytes of packed yuyv
-(y0 u y1 v). the header arrives as a short packet, which is how you find frame boundaries:
+(y0 u y1 v). on camera B this order gives colours that match the room, checked by eye
+on one scene, not against a colour chart. the header arrives as a short packet, which is how you find frame boundaries:
 
 - a read whose length is a multiple of 512 is all pixel data
 - a read whose length is 511 mod 512 ends with a header, and the bytes before it finish the
@@ -95,8 +96,6 @@ block instead. with their read size that gives the same frames.
 ## what we do not know
 
 - the rest of the 511 byte header, and what the format values mean
-- camera B's picture comes out with a strong red cast when decoded as yuyv. could be the
-  lighting on our desk, could be the decode. unexplained
 - camera B does not reply to the jpeg style open at all. unexplained
 - camera B on our desk had the iAP magic written to it earlier in the same power cycle before
   the raw open worked. whether the raw open works straight after plugging in is not verified.
