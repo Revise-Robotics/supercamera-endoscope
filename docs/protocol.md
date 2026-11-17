@@ -55,6 +55,10 @@ all three requests are control transfers with wValue 5, wIndex 0.
 open: claim the data interface, set its alt setting if the endpoints live on alt 1, getinfo,
 camera up, then bulk read from the in endpoint. release: camera down.
 
+camera B needs nothing on the iAP interface for this. it opened straight after a plug in with
+only the steps above (checked once). right after a plug in its iAP in endpoint has
+`ff 55 02 00 ee 10` waiting, which the driver never reads.
+
 ### getinfo reply
 
 camera B replies with 480 bytes and no prefix. the app also accepts a form with a 6 byte
@@ -97,9 +101,6 @@ block instead. with their read size that gives the same frames.
 
 - the rest of the 511 byte header, and what the format values mean
 - camera B does not reply to the jpeg style open at all. unexplained
-- camera B on our desk had the iAP magic written to it earlier in the same power cycle before
-  the raw open worked. whether the raw open works straight after plugging in is not verified.
-  right after a plug in its iAP in endpoint had `ff 55 02 00 ee 10` waiting
 - camera C in issue #1 is a dual lens model and gave a garbled picture. the app has a camera
   switch command (`bb aa 0b ...`) and per camera resolution lists that the driver does not
   implement. whether that is related is not known
